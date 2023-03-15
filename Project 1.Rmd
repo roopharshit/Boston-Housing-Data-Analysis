@@ -1,0 +1,246 @@
+
+
+```{r}
+library(MASS)
+library(corrplot)
+library(car)
+```
+
+Make price estimates based on different preferences that a customer can have, so that they can assess if a customer's budget is appropriate or not.
+
+```{r}
+summary(Boston)
+```
+
+```{r, fig.height=13, fig.width=17}
+Data = Boston
+Data$medv <- log(Data$medv)
+names(Data)[14] <- "log_medv"
+Data
+pairs(Data)
+```
+```{r}
+plot(Data$log_medv, Data$lstat)
+plot(Boston$medv, Boston$lstat)
+plot(Data$log_medv, Data$rm)
+```
+
+High correlation between rad and tax observed
+```{r}
+cor(Data)
+```
+
+```{r}
+corrplot(cor(Data))
+```
+
+
+Must have features: 
+1. Structural properties of house
+  a. zn, rm, age
+2. Accessibility:
+  a. dis, rad
+3. Neighborhood:
+  a. crim, indus, chas, nox, ptratio, black, lstat
+  
+
+
+***Train and Test Split of data***
+  
+```{r}
+set.seed(1)
+train = sample(1:506,405)
+Data_train = Data[train,]
+Data_test = Data[-train,]
+dim(Data_train)
+dim(Data_test)
+```
+
+***Preliminary model***
+
+```{r}
+lm.fit0 = lm(log_medv~. , data = Data_train)
+summary(lm.fit0)
+vif(lm.fit0)
+```
+Only the rad, tax appears to be collinear. We can try to combine both of them into one predictor
+
+```{r}
+rad_tax = Data_train$rad * Data_train$tax
+lm.fit1 = lm(log_medv ~ crim + zn + chas + nox + rm + age + dis + rad:tax + ptratio + black + lstat, data = Data_train)
+summary(lm.fit1)
+vif(lm.fit1)
+plot(lm.fit1)
+```
+
+we got rid of the collinearity in the model. 
+removing zn, age, indus coz they are unnecessary complexities in the model which doesn't even improve the fit and adding the polynomial term of lstat^2 since thatseems to be the only one which is non linear.
+```{r}
+lm.fit3 = lm(log_medv ~ crim + chas + nox + rm + dis + rad:tax + ptratio + black + lstat + I(lstat^2), data = Data_train)
+summary(lm.fit3)
+plot(lm.fit3)
+hist(lm.fit3$residuals, breaks = 100)
+
+```
+
+
+***Visualising the outliers***
+```{r, fig.height=10, fig.width=17}
+par(mfrow = c(2, 7))
+for (i in 1:(dim(Data_train)[2]-1)) {
+  boxplot(Data_train[,i], main = names(Data_train)[i])
+}
+```
+
+Presence of outliers in crim, zn, rm, dis, ptratio, black, lstat
+-> Huge fluctuations in crim, zn, rm, black
+
+```{r}
+percentile_99 <- quantile(Data_train$crim, 0.995)
+is_outlier <- Data_train$crim > percentile_99
+outliers <- Data_train$crim[is_outlier]
+row_num <- which(is_outlier)
+Data_train_cleaned <- Data_train[-row_num,]
+
+
+percentile_99 <- quantile(Data_train_cleaned$rm, 0.99)
+is_outlier <- Data_train_cleaned$rm > percentile_99
+outliers <- Data_train_cleaned$rm[is_outlier]
+row_num <- which(is_outlier)
+Data_train_cleaned <- Data_train_cleaned[-row_num,]
+
+
+```
+
+training the model on cleaned data
+```{r}
+lm.fit4 = lm(log_medv ~ crim + chas + nox + rm + dis + rad:tax + ptratio + black + lstat + I(lstat^2), data = Data_train_cleaned)
+summary(lm.fit4)
+plot(lm.fit4)
+hist(lm.fit4$residuals, breaks = 100)
+```
+
+finding MSE for both hte 3rd and 4th model
+```{r}
+pred_val_1 = predict(lm.fit3, newdata = Data_test)
+
+rmse_1 = sqrt(mean((pred_val_1 - Data_test$log_medv)^2))
+rmse_1
+
+pred_val_2 = predict(lm.fit4, newdata = Data_test)
+rmse_2 = sqrt(mean((pred_val_2 - Data_test$log_medv)^2))
+rmse_2
+```
+This shows that removing the outliers only decrease the accuracy of the model on new data
+
+
+```{r}
+lm.fit5 = lm(log_medv ~ crim + chas + rm + rad:tax + nox + dis + dis:nox + ptratio + black + lstat + I(lstat^2), data = Data_train)
+summary(lm.fit5)
+plot(lm.fit5)
+vif(lm.fit5)
+
+pred_val_5 = predict(lm.fit5, newdata = Data_test)
+
+rmse_5 = sqrt(mean((pred_val_5 - Data_test$log_medv)^2))
+rmse_5
+```
+
+```{r}
+lm.fit6 = lm(log_medv ~ crim + chas + rm + rad:tax + nox + dis + dis:nox + ptratio + black + lstat + I(lstat^2) + I(rm^2), data = Data_train)
+summary(lm.fit6)
+plot(lm.fit6)
+vif(lm.fit6)
+
+pred_val_6 = predict(lm.fit6, newdata = Data_test)
+
+rmse_6 = sqrt(mean((pred_val_6 - Data_test$log_medv)^2))
+rmse_6
+```
+```{r}
+plot(Data$chas, Data$log_medv)
+```
+
+model with must have features
+```{r}
+lm.fit_must = lm(log_medv~ . -indus-rad-tax+rad:tax+I(lstat^2), data = Data_train)
+summary(lm.fit_must)
+plot(lm.fit_must)
+
+pred_val_must = predict(lm.fit_must, newdata = Data_test)
+
+rmse_must = sqrt(mean((pred_val_must - Data_test$log_medv)^2))
+cat("root mean square (rmse): ", rmse_must)
+```
+Analysis for the houses with highest value
+```{r, fig.height=10, fig.width=15}
+medv_95 = quantile(Data$log_medv, 0.95)
+top_houses <- Data[Data$log_medv >= medv_95,]
+top_houses
+pairs(~ crim + zn + chas + nox + rm + age + dis + ptratio + black + lstat + log_medv, data = top_houses)
+pairs(~ crim + zn + chas + nox + rm + age + dis + rad +tax + ptratio + black + lstat + log_medv, data = Data, col = ifelse(Data$log_medv >= medv_95, 'red', 'black'))
+```
+
+
+```{r}
+library(ggplot2)
+
+# Load Boston Housing dataset
+data(Boston)
+
+# Calculate median value of owner-occupied homes (MEDV)
+medv_mean <- mean(Boston$medv)
+
+# Create scatter plot of LSTAT vs. RM, with points colored by MEDV value
+ggplot(data = Boston, aes(x = dis, y = rm, color = medv > medv_mean)) + 
+  geom_point() +
+  scale_color_manual(values = c("blue", "red"), 
+                     labels = c("Below mean MEDV", "Above mean MEDV")) +
+  labs(x = "weighted mean of distances to five Boston employment centres", 
+       y = "average number of rooms per dwelling", 
+       title = "Trade-offs between dis and rm")
+
+```
+Analysis for tradeoffs
+```{r}
+medv_median = quantile(Data$log_medv, 0.5)
+median_houses <- Data[Data$log_medv >= medv_median,]
+pairs(~ crim + zn + chas + nox + rm + age + dis + rad +tax + ptratio + black + lstat + log_medv, data = Data, col = ifelse(Data$log_medv <= medv_median, 'red', 'blue'))
+```
+Increase the dis and you can get low house prices at very low crime rate, less aged homes at lower price, least nox at lowest rates.
+If you can compromise on pupil-teacher ratio, you can get houses close to the mahor employment centers at a rate lower than the average rate.
+
+
+***baseline condition***
+```{r}
+library(MASS)
+
+# Load Boston Housing dataset
+data(Boston)
+
+# Filter for houses that meet the criteria
+young_houses <- Boston[Boston$ptratio < 18 & Boston$dis <= 3 & Boston$nox <= 0.5,]
+
+# Calculate median and range of estimated house prices
+median_price <- median(young_houses$medv)
+price_range <- range(young_houses$medv)
+
+# Print results
+cat("Median price:", median_price, "\n")
+cat("Price range:", price_range[1], "-", price_range[2], "\n")
+
+```
+
+
+```{r}
+pct_95 <- quantile(Boston$medv, 0.95)
+high_value_houses <- Boston[Boston$medv >= pct_95, ]
+mean(high_value_houses$medv)
+```
+
+
+
+
+
+
+
